@@ -5,6 +5,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
 import java.text.DecimalFormat;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Queue;
 
@@ -14,35 +15,60 @@ import org.jline.terminal.TerminalBuilder;
 public class MemoryAllocator {
     private static final int MEMORY_BLOCK_SIZE = 10 * 1024 * 1024; // 10 MB
 
-    private static Queue<byte[]> memory = new LinkedList<byte[]>();
+    private static HashMap<Integer, Queue<byte[]>> memory = new HashMap<>();
     private static long allocatedMemory = 0;
 
     public static void main(String[] args) throws IOException {
-        System.out.println("Press 'a' to allocate memory, 'A' to allocate 10x memory, 'f' to free memory, or 'q' to quit.");
+        String helpMessage = "Options:\n" +
+            "'a' - allocate 10MB chunk of memory\n" +
+            "'A' - allocate 100MB chunk of memory\n" +
+            "'f' - free 10MB chunk of memory\n" +
+            "'F' - free 100MB chunk of memory\n" +
+            "'?' - print this help message\n" +
+            "'i' - print detailed memory statistics\n" +
+            "'q' - quit program";
+        System.out.println("Welcome to the java memory tester. " + helpMessage);
 
         Terminal terminal = TerminalBuilder.terminal();
         terminal.enterRawMode();
         try {
             while (true) {
                 char ch = (char) terminal.reader().read();
+                boolean memChanged = false;
                 switch (ch) {
                     case 'a':
                         allocateMemory(1);
+                        memChanged = true;
                         break;
                     case 'A':
                         allocateMemory(10);
+                        memChanged = true;
                         break;
                     case 'f':
-                        freeMemory();
+                        freeMemory(1);
+                        memChanged = true;
+                        break;
+                    case 'F':
+                        freeMemory(10);
+                        memChanged = true;
+                        break;
+                    case '?':
+                        System.out.println(helpMessage);
+                        break;
+                    case 'i':
+                        printMemoryInfoBean(true);
                         break;
                     case 'q':
                         System.out.println("Exiting...");
                         return;
                     default:
-                        System.out.println("Invalid input. Press 'a' to allocate memory, 'f' to free memory, or 'q' to quit.");
-            }
+                        System.out.println("Invalid input. " + helpMessage);
+                }
 
-            printMemoryInfoBean();
+                if (memChanged) {
+                    printMemoryInfoBean(false);
+                }
+                System.out.println("=".repeat(terminal.getWidth()));
             }
         } finally {
             terminal.close();
@@ -50,45 +76,46 @@ public class MemoryAllocator {
     }
 
     private static void allocateMemory(int multiplier) {
-        byte[] memoryBlock = new byte[MEMORY_BLOCK_SIZE * multiplier];
-        memory.add(memoryBlock);
-        allocatedMemory += MEMORY_BLOCK_SIZE * multiplier;
+        int allocSize = MEMORY_BLOCK_SIZE * multiplier;
+        try {
+            byte[] memoryBlock = new byte[allocSize];
+            memory.computeIfAbsent(allocSize, k -> new LinkedList<>()).add(memoryBlock);
+            allocatedMemory += allocSize;
+        } catch (java.lang.OutOfMemoryError e) {
+            System.err.println("Out-of-memory, allocation of " + formatBytes(MEMORY_BLOCK_SIZE * multiplier) + " failed.");
+        }
     }
 
-    private static void freeMemory() {
-        allocatedMemory -= MEMORY_BLOCK_SIZE;
-        memory.remove();
+    private static void freeMemory(int multiplier) {
+        int allocSize = MEMORY_BLOCK_SIZE * multiplier;
+        if (memory.containsKey(allocSize)) {
+            if (memory.get(allocSize).poll() != null) {
+                allocatedMemory -= MEMORY_BLOCK_SIZE;
+            }
+        }
         System.gc(); // Request garbage collection to reclaim freed memory
     }
 
-    private static void printMemoryInfoRuntime() {
-        long totalMemory = Runtime.getRuntime().totalMemory();
-        long freeMemory = Runtime.getRuntime().freeMemory();
-        long usedMemory = totalMemory - freeMemory;
-
-        System.out.println("Allocated Memory: " + allocatedMemory);
-        System.out.println("Used Memory: " + usedMemory);
-        System.out.println("Total Memory: " + totalMemory);
-        System.out.println("Free Memory: " + freeMemory);
-        System.out.println();
-    }
-    public static void printMemoryInfoBean() {
+    public static void printMemoryInfoBean(boolean verbose) {
         MemoryMXBean memoryMXBean = ManagementFactory.getMemoryMXBean();
         MemoryUsage heapMemoryUsage = memoryMXBean.getHeapMemoryUsage();
         MemoryUsage nonHeapMemoryUsage = memoryMXBean.getNonHeapMemoryUsage();
 
 
         System.out.println("Heap Memory Usage:");
-        System.out.println("    Initial: " + formatBytes(heapMemoryUsage.getInit()));
         System.out.println("    Used: " + formatBytes(heapMemoryUsage.getUsed()));
-        System.out.println("    Committed: " + formatBytes(heapMemoryUsage.getCommitted()));
-        System.out.println("    Max: " + formatBytes(heapMemoryUsage.getMax()));
 
-        System.out.println("Non-Heap Memory Usage:");
-        System.out.println("    Initial: " + formatBytes(nonHeapMemoryUsage.getInit()));
-        System.out.println("    Used: " + formatBytes(nonHeapMemoryUsage.getUsed()));
-        System.out.println("    Committed: " + formatBytes(nonHeapMemoryUsage.getCommitted()));
-        System.out.println("    Max: " + formatBytes(nonHeapMemoryUsage.getMax()));
+        if (verbose) {
+            System.out.println("    Initial: " + formatBytes(heapMemoryUsage.getInit()));
+            System.out.println("    Max: " + formatBytes(heapMemoryUsage.getMax()));
+            System.out.println("    Committed: " + formatBytes(heapMemoryUsage.getCommitted()));
+
+            System.out.println("Non-Heap Memory Usage:");
+            System.out.println("    Initial: " + formatBytes(nonHeapMemoryUsage.getInit()));
+            System.out.println("    Used: " + formatBytes(nonHeapMemoryUsage.getUsed()));
+            System.out.println("    Committed: " + formatBytes(nonHeapMemoryUsage.getCommitted()));
+            System.out.println("    Max: " + formatBytes(nonHeapMemoryUsage.getMax()));
+        }
     }
 
     private static String formatBytes(long bytes) {
